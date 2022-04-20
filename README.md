@@ -1,6 +1,6 @@
 # NFT Minter Backend
 
-## Emv 
+## Env 
 
 ```bash
 NFT_STORAGE_KEY = 
