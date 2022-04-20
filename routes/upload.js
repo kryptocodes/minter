@@ -1,12 +1,17 @@
-var express = require('express');
-var router = express.Router();
-var Image = require('./../models/image');
-var multer = require('multer');
+const express = require('express');
+const router = express.Router();
+
+const Image = require('./../models/image');
+const User = require('./../models/user');
+const Web3 = require("web3")
+
+const multer = require('multer');
 const path = require("path");
 const fs = require("fs");
-
+const jwt = require('jsonwebtoken');
 const { check, validationResult } = require('express-validator');
-const { NFTStorage, File } = require('nft.storage')
+const { NFTStorage, File } = require('nft.storage');
+const AuthCheck = require('../middleware/API');
 const NFT_STORAGE_KEY = process.env.NFT_STORAGE_KEY
 
 
@@ -24,19 +29,28 @@ const storage = multer.diskStorage({
 
   const upload = multer({ storage: storage });
 
-router.post("/upload",
+router.post("/upload", AuthCheck,
 upload.single("nft"), (req, res) => {
+	const fileType = req.file.mimetype
+	console.log(fileType);
+	const supportedFileTypes = ["JPG"," PNG","GIF"," SVG"," MP4,","WEBM","MP3"," WAV"," OGG","GLB","GLTF"];
+	if(fileType.includes(supportedFileTypes) ){
+		return res.status(400).json({
+			message: "Invalid file type"
+		});
+	}
 	
     const obj = {
         img: {
             data: fs.readFileSync(path.join(__dirname, "./../uploads/" + req.file.filename)),
-            contentType: "image/png"
+            contentType: req.file.contentType
         }
     }
 	var uid = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     const newImage = new Image({
         wallet: req.body.wallet,
 		image: obj.img,
+		type: fileType,
 		uid: uid
     });
 
@@ -46,14 +60,8 @@ upload.single("nft"), (req, res) => {
 				message: err.message || "Some error occurred while uploading the image."
 			});
 		} else {
-			// remove file from uploads folder
-			fs.unlink(path.join(__dirname, "./../uploads/" + req.file.filename), (err) => {
-				if (err) {
-					console.log(err);
-				}
-			});
 			return res.status(200).json({
-				message: "Image uploaded successfully",
+				message: "File uploaded successfully",
 				uid: uid
 			});
 		}
@@ -64,32 +72,40 @@ router.post("/mint",
 [
 	check('wallet').notEmpty().withMessage('Wallet is required'),
 	check('uid').notEmpty().withMessage('UID is required'),
-	check('name').notEmpty().withMessage('Name is required'),
-	check('description').notEmpty().withMessage('Description is required'),
+	check('metadata').notEmpty().withMessage('Metadata is required')
 ],
+AuthCheck,
 	async(req, res) => {
 		const errors = validationResult(req);
 		if (!errors.isEmpty()) {
 			return res.status(422).json({ errors: errors.array() });
 		}
-		const { wallet, uid,name,description } = req.body;
+		const { wallet, uid,metadata } = req.body;
 		try {
 		const image = await Image.findOne({wallet: wallet, uid: uid});
-
+		const fileType = image.type;
+		const fileName = fileType.substring(fileType.indexOf("/") + 1);
 		const nftstorage = new NFTStorage({ token: NFT_STORAGE_KEY })
+
 		const data = await nftstorage.store({
 			image: new File(
 				[image?.image.data],
-				`${uid}.jpg`, {
-					type: 'image/jpg',
+				`${uid}.${fileName}`, {
+					type: fileType,
 				  }),
-			name: name,
-			description: description,
+			name: metadata.name,
+			description: metadata.description,
+			external_url: metadata?.external_url ? metadata.external_url : "",
+			attributes: metadata?.attributes ? metadata.attributes : "",
+			background_color: metadata?.background_color ? metadata.background_color : "",
+			animation_url: metadata?.animation_url ? metadata.animation_url : "",
+			youtube_url: metadata?.youtube_url ? metadata.youtube_url : "",
 		});
 		return res.status(200).json({
-			message: "Image uploaded successfully",
+			message: "File uploaded successfully",
 			data: data
 		});
+		
 
 	}
 	catch (error) {
@@ -99,5 +115,76 @@ router.post("/mint",
 	}
 } 
 	)
+
+router.post("/auth",[
+	check('wallet').notEmpty().withMessage('Wallet is required'),
+	check('signature').notEmpty().withMessage('Signature is required'),
+], async(req, res) => {
+	const errors = validationResult(req);
+	if (!errors.isEmpty()) {
+		return res.status(422).json({ errors: errors.array() });
+	}
+	const { wallet,signature } = req.body;
+	const web3 = new Web3('https://rpc-mumbai.matic.today/');
+	try {
+		const user = await User.findOne({wallet: wallet});
+		const UserID = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+		if(!user){
+		   const newUser = new User({
+			   	wallet: wallet,
+				userID: UserID,
+		   });
+		   await newUser.save();
+		}
+		const address = web3.eth.accounts.recover("gm",signature);
+		if(address === wallet){
+			const token = jwt.sign({
+				wallet: wallet,
+				userID: user.userID ? user.userID !== '' : UserID
+		}, process.env.JWT_SECRET);
+		return res.status(200).json({
+			message: "Authentication successful",
+			APIKey: token
+		});
+	} else {
+		return res.status(401).json({
+			message: "Authentication failed"
+		});
+	}
+	}
+	catch (error) {
+		return res.status(500).json({
+			error: error.message 
+		});
+	}
+})
+
+router.get("/user/:wallet",[
+	check('wallet').notEmpty().withMessage('Wallet is required'),
+], async(req, res) => {
+	const errors = validationResult(req);
+	if (!errors.isEmpty()) {
+		return res.status(422).json({ errors: errors.array() });
+	}
+	const { wallet } = req.params;
+	try {
+		const user = await User.findOne({wallet: wallet});
+		if(!user){
+			return res.status(404).json({
+				message: "User not found"
+			});
+		}
+		return res.status(200).json({
+			wallet: user.wallet,
+			UserID: user.userID
+		});
+	}
+	catch (error) {
+		return res.status(500).json({
+			message: error.message
+		});
+	}
+})
+
 
 module.exports = router;

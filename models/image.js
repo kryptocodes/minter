@@ -2,7 +2,7 @@ var mongoose = require('mongoose');
 
 var Schema = mongoose.Schema;
 
-var ImageShcema = new Schema({
+var ImageSchema = new Schema({
 	wallet:{
 		type: String,
 		required: true
@@ -11,12 +11,18 @@ var ImageShcema = new Schema({
         data: Buffer,
         contentType: String
     },
+	type:{
+		type: String,
+		required: true
+	},
 	uid: {
 		type: String,
 		default: ''
 	},
+},{
+	timestamps: true
 });
 
-var Image = mongoose.model('Image', ImageShcema);
+var Image = mongoose.model('Image', ImageSchema);
 
 module.exports = Image;
